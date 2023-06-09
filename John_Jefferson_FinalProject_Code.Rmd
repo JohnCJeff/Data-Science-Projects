@@ -1,0 +1,762 @@
+---
+title: "IST687 Final Project - Group G"
+author: "John Jefferson, Tanya MacKinnon and John O'Rourke"
+date: "3/29/2022"
+output:
+html_document:
+df_print: paged
+---
+
+This is Group G's Final Project R code.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Section 1: Initial Start - Install Packages and Load Libraries
+
+```{r Libraries}
+# Ensure packages are available
+EnsurePackage<-function(x) {
+  x<- as.character(x)
+  
+  if(!require(x,character.only = TRUE)) {
+    install.packages(pkgs=x,repos="http://cran.r-project.org/")
+    require(x,character.only = TRUE)
+  }
+}
+EnsurePackage("tidyverse")
+EnsurePackage("imputeTS")
+EnsurePackage("ggplot2")
+EnsurePackage("caret")
+EnsurePackage("shiny")
+EnsurePackage("corrplot")
+EnsurePackage("cowplot")
+EnsurePackage("lmtest")
+
+library(lmtest)
+library(tidyverse)
+library(dplyr)
+library(caret)
+library(kernlab)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(imputeTS)
+library(ggplot2)
+library(ggmap)
+library(maps)
+library(mapproj)
+library(gridExtra)
+
+library(corrplot)
+library(cowplot)
+```
+
+## Section 2: Load data file and review data structure
+
+```{r Importing}
+
+#Function to import data file
+importHousing <- function(filename){
+  datasetHousing <- read_csv(filename)
+  str(datasetHousing)
+  return(datasetHousing)
+}
+
+
+#John O'Rouke Local file location - "F:/Syracuse/IST-687/Final Project/Dataset/housing.csv/housing.csv"
+# Tanya local file location "C:/Users/tlmac/OneDrive/Documents/syracuse/ist 687/housing.csv"
+
+#load data
+file <- "F:/Syracuse/IST-687/Final Project/Dataset/housing.csv/housing.csv"
+housingData <- importHousing(file)
+
+#review data
+summary(housingData)
+glimpse(housingData)
+sapply(housingData, sd, na.rm=TRUE)
+skewness(housingData$median_income)
+skewness(housingData$median_house_value)
+skewness(housingData$total_bedrooms,na.rm=TRUE)
+skewness(housingData$total_rooms,na.rm=TRUE)
+skewness(housingData$population,na.rm=TRUE)
+skewness(housingData$housing_median_age,na.rm=TRUE)
+skewness(housingData$households,na.rm=TRUE)
+```
+
+## Section 3: Data Cleaning - Null Values, Factors, Unit adjustments
+
+```{r Cleaning}
+
+#Replace null values in total bedrooms with na_interpolation
+sapply(housingData, function(x) sum(is.na(x)))
+housingData$total_bedrooms <- na_interpolation(housingData$total_bedrooms)
+sapply(housingData, function(x) sum(is.na(x)))
+
+#create a factor for ocean_proximity variable
+housingData %>% group_by(ocean_proximity) %>%
+                summarise(total_valeu = sum(median_house_value),
+                .groups = 'drop')
+housingData$ocean_factor <- as.factor(housingData$ocean_proximity)
+housingData %>% group_by(ocean_factor) %>%
+                summarise(total_valeu = sum(median_house_value),
+                .groups = 'drop')
+
+
+#create new variables for adjusted units on total bedrooms, total rooms, population by houstehold
+housingData$rooms_per_house= housingData$total_rooms/housingData$households
+housingData$bedrooms_per_house=housingData$total_bedrooms/housingData$households
+housingData$population_per_house=housingData$population/housingData$households
+
+#change unit $10000 for median house price
+
+housingData$median_house_value <- housingData$median_house_value/10000
+
+
+#review data 
+summary(housingData)
+```
+
+## Section 4: Data Exploration - Variables - histograms and boxplots
+
+```{r exploration}
+
+#histograms
+
+histFun <- function(x){
+  ggplot(data=housingData,aes({{x}})) + 
+   geom_histogram(color = "#000000", fill = "#0099F8", bins=30) +
+   geom_vline(aes(xintercept = mean({{x}})), color = "#000000", size = 1.25) +
+   geom_vline(aes(xintercept = mean({{x}}) + sd({{x}})), color = "#000000", size = 1, linetype = "dashed") +
+   geom_vline(aes(xintercept = mean({{x}}) - sd({{x}})), color = "#000000", size = 1, linetype = "dashed")
+}
+
+hist_house_value <- histFun(median_house_value)
+hist_income <- histFun(median_income)
+hist_rooms <- histFun(rooms_per_house)
+hist_ocean <- histFun(as.numeric(ocean_factor))
+hist_population <- histFun(population_per_house)
+hist_bedrooms <- histFun(bedrooms_per_house)
+hist_household <- histFun(households)
+hist_age <- histFun(housing_median_age)
+hist_latitude <- histFun(latitude)
+hist_longitude <- histFun(longitude)
+
+hist_grid <- plot_grid(
+   hist_house_value, hist_income, hist_rooms, hist_ocean, hist_population, hist_bedrooms, hist_household, hist_age, hist_longitude, hist_latitude,
+   nrow = 5,
+   ncol = 2
+)
+
+hist_grid
+
+#boxplots
+
+boxFun <- function(y) {
+  ggplot(housingData, aes({{y}})) +
+    geom_boxplot(outlier.colour="red", outlier.shape=8,outlier.size=4, fill = "#0099F8")
+}
+
+boxMedianHousingValue <- boxFun(median_house_value)
+boxIncome <- boxFun(median_income)
+boxTotal_rooms <- boxFun(rooms_per_house)
+# boxOcean <- boxFun(as.numeric(ocean_factor))
+boxPopulation <- boxFun(population_per_house)
+boxTotal_bedrooms <- boxFun(bedrooms_per_house)
+boxHousehold <- boxFun(households)
+boxAge <- boxFun(housing_median_age)
+boxLatitude <- boxFun(latitude)
+boxLongitude <- boxFun(longitude)
+
+#boxplot for ocean factor against median_house_value
+
+boxOcean <- ggplot(housingData, aes(ocean_factor, y=median_house_value)) +
+    geom_boxplot(outlier.colour="red", outlier.shape=8,outlier.size=4, fill = "#0099F8")
+
+grid.arrange(boxMedianHousingValue, boxIncome, boxTotal_rooms, boxOcean, boxPopulation, boxTotal_bedrooms, boxHousehold, boxAge, boxLatitude, boxLongitude, ncol=2, nrow=5)
+
+
+```
+
+## Section 5: Data Exploration - Correlation
+
+```{r exploration correlation}
+#Create a correlation matrix
+dat <- housingData %>%
+    select(median_house_value,latitude,longitude,housing_median_age,total_rooms,total_bedrooms,population,households,median_income,
+           rooms_per_house,bedrooms_per_house,population_per_house)
+corelation_matrix <- cor(dat)
+corelation_matrix
+
+corrplot(cor(dat),
+  method = "number",
+  type = "upper",
+  addCoef.col = 2,   
+  number.cex = 0.8
+)
+
+```
+
+## Section 6: Data Exploration - Linear Relationships  
+
+```{r graphical data exporation}
+
+#Graph function
+ggplotRegression <- function (fit) {
+ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+  geom_point() +
+  stat_smooth(method = "lm", col = "red") +
+  labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                     "Intercept =",signif(fit$coef[[1]],5 ),
+                     " Slope =",signif(fit$coef[[2]], 5),
+                     " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+
+#Function to fit linear models
+
+linearRegressionMHV <- function(varindep1){
+  lm(formula = paste("median_house_value", "~", varindep1), data = housingData)
+}
+
+plotPop <- ggplotRegression(linearRegressionMHV("population_per_house"))
+plotRooms <- ggplotRegression(linearRegressionMHV("rooms_per_house"))
+plotBedrooms <- ggplotRegression(linearRegressionMHV("bedrooms_per_house"))
+plotAge <- ggplotRegression(linearRegressionMHV("housing_median_age"))
+plotHouseholds <- ggplotRegression(linearRegressionMHV("households"))
+plotIncome <- ggplotRegression(linearRegressionMHV("median_income"))
+plotLat <- ggplotRegression(linearRegressionMHV("latitude"))
+plotLong <- ggplotRegression(linearRegressionMHV("longitude"))
+plotOcean <- ggplotRegression(linearRegressionMHV("ocean_factor"))
+
+
+grid.arrange(plotIncome,plotRooms,plotOcean, plotPop,plotBedrooms,plotHouseholds,plotAge,plotLat,
+plotLong, nrow=5, ncol=2)
+```
+
+## Section 7 : Data Exploration - Maps
+
+```{r mapping}
+CAMap<-map_data("state")
+
+ggplot(CAMap)+geom_point(aes(x=long,y=lat))+coord_map()
+
+CalData<-CAMap%>%filter(region=="california")
+
+ggplot(CalData)+geom_point(aes(x=long,y=lat))+coord_map()
+
+map.simple<-ggplot(CalData)+geom_polygon(color="black",fill="gray",aes(x=long,y=lat,group=group))+coord_map()
+
+map.simple
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$population,size=(housingData$population)))+ggtitle("Housing Population For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$total_rooms,size=housingData$total_rooms))+ggtitle("Housing Total Rooms For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$total_bedrooms,size=housingData$total_bedrooms))+ggtitle("Housing Total Bedrooms For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$households,size=housingData$households))+ggtitle("Housing Households For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$median_income,size=housingData$median_income))+ggtitle("Housing Median Income For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$housing_median_age,size=housingData$housing_median_age))+ggtitle("Housing Median Age For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$ocean_proximity,size=housingData$ocean_proximity))+ggtitle("Housing Ocean Promixy to a Beach For Each Block")
+
+map.simple+geom_point(data = housingData,aes(x=housingData$longitude,y=housingData$latitude,color=housingData$median_house_value,size=housingData$median_house_value))+ggtitle("Housing Median House Value For Each Block")
+
+
+```
+
+## Section 9: Linear Model
+
+```{r Linear Modelling}
+#
+
+housingModel_allVariables <- lm(formula = median_house_value ~ latitude + longitude + 
+                     population_per_house +rooms_per_house + housing_median_age + 
+                     bedrooms_per_house +households + median_income + ocean_factor, data = housingData)
+summary(housingModel_allVariables)
+
+housingModel_IncomeOcean <- lm(formula = median_house_value ~median_income + ocean_factor, data = housingData)
+summary(housingModel_IncomeOcean)
+
+housingModel_IncomeOceanRooms <- lm(formula = median_house_value ~median_income + ocean_factor + rooms_per_house, data = housingData)
+summary(housingModel_IncomeOceanRooms)
+
+housingModel_Location <- lm(formula = median_house_value ~ ocean_factor + latitude + longitude , data = housingData)
+summary(housingModel_Location)
+
+housingModel_Income <- lm(formula = median_house_value ~ median_income , data = housingData)
+summary(housingModel_Income)
+
+housingModel_Density <- lm(formula = median_house_value ~ population_per_house + bedrooms_per_house + rooms_per_house + households, data = housingData)
+summary(housingModel_Density)
+
+housingModel_ocean <- lm(formula = median_house_value ~ ocean_factor, data = housingData)
+summary(housingModel_ocean)
+```
+
+```{r stepped linear model}
+#
+
+housingModel_step1 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house + population_per_house, data = housingData)
+summary(housingModel_step1)
+
+housingModel_step2 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house , data = housingData)
+summary(housingModel_step2)
+
+housingModel_step3 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude  , data = housingData)
+summary(housingModel_step3)
+
+housingModel_step4 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households  , data = housingData)
+summary(housingModel_step4)
+
+housingModel_step5 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age,                         data = housingData)
+summary(housingModel_step5)
+
+housingModel_step6 <- lm(formula = median_house_value ~ median_income + rooms_per_house + latitude,data = housingData)
+summary(housingModel_step6)
+
+housingModel_step7 <- lm(formula = median_house_value ~ median_income + rooms_per_house ,data = housingData)
+summary(housingModel_step7)
+
+
+```
+
+## Section 10: Partition data to Train and Test
+
+```{r Training and Testing set creation}
+#
+
+set.seed(127)
+
+trainFrame <- createDataPartition(y=housingData$median_house_value, p=.6667, list = FALSE)
+trainData <- housingData[trainFrame,]
+testData <- housingData[-trainFrame,]
+dim(trainData)
+dim(testData)
+
+```
+
+#Section 11: Train and Test the model
+
+```{r Initial Models}
+#model 1 - all variables
+
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_all <- train(median_house_value ~ latitude + longitude + 
+                    population_per_house + rooms_per_house + housing_median_age + 
+                    bedrooms_per_house +  households + median_income + ocean_factor, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_all)
+predict_all <-  predict(train_all,testData)
+errors <- testData$median_house_value - predict_all
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_all,testData$median_house_value)^2
+r2
+
+train_all_kfold <- train( median_house_value ~ latitude + longitude + 
+                    population +total_rooms + housing_median_age + 
+                    total_bedrooms +  households + median_income + ocean_factor, 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+
+summary(train_all_kfold)
+predict_all_kfold <-  predict(train_all_kfold,testData)
+errors <- testData$median_house_value - predict_all_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_all_kfold,testData$median_house_value)^2
+r2
+
+
+#model 2 - income
+train_income <- train(median_house_value ~  median_income, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_income)
+predict_income <-  predict(train_income,testData)
+errors <- testData$median_house_value - predict_income
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_income,testData$median_house_value)^2
+r2
+
+
+train_income_kfold <- train( median_house_value ~ median_income, 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_income_kfold)
+predict_income_kfold <-  predict(train_income_kfold,testData)
+errors <- testData$median_house_value - predict_income_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_income_kfold,testData$median_house_value)^2
+r2
+
+#model 3 - density
+train_density <- train(median_house_value ~  population_per_house + bedrooms_per_house + rooms_per_house + households, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_density)
+predict_density <-  predict(train_density,testData)
+errors <- testData$median_house_value - predict_density
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_density,testData$median_house_value)^2
+r2
+
+
+train_density_kfold <- train( median_house_value ~ population_per_house + bedrooms_per_house + rooms_per_house + households, 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_density_kfold)
+predict_density_kfold <-  predict(train_density_kfold,testData)
+errors <- testData$median_house_value - predict_density_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_density_kfold,testData$median_house_value)^2
+r2
+
+
+
+#model 3 - location
+train_location <- train(median_house_value ~  ocean_factor + longitude + latitude, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_location)
+predict_location <-  predict(train_location,testData)
+errors <- testData$median_house_value - predict_location
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_location,testData$median_house_value)^2
+r2
+
+
+train_location_kfold <- train( median_house_value ~ ocean_factor + longitude + latitude, 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_location_kfold)
+predict_location_kfold <-  predict(train_location_kfold,testData)
+errors <- testData$median_house_value - predict_location_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_location_kfold,testData$median_house_value)^2
+r2
+
+
+```
+
+
+```{r Initial Stepped models}
+
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step1 <- train(median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house + population_per_house, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step1)
+predict_step1 <-  predict(train_step1,testData)
+errors <- testData$median_house_value - predict_step1
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step1,testData$median_house_value)^2
+r2
+
+train_step1_kfold <- train( median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house + population_per_house, 
+                    data = trainData,
+                    trControl = kfold,
+                    method="lm")
+summary(train_step1_kfold)
+predict_step1_kfold <-  predict(train_step1_kfold,testData)
+errors <- testData$median_house_value - predict_step1_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step1_kfold,testData$median_house_value)^2
+r2
+
+```
+
+
+```{r Second round of stepped Models}
+
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house , 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude + bedrooms_per_house , 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+
+```
+
+```{r Third round of stepped models}
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude , 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +
+                           + households + longitude  , 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+```
+
+
+```{r Fourth round of stepped models}
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age +households, 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house 
+                            + latitude + housing_median_age + households, 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+```
+
+```{r Fifth round of stepped models}
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age , 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house + latitude + housing_median_age , 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+```
+
+```{r Sixth round of stepped models}
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house + latitude , 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house + latitude , 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+```
+```{r Final round of stepped models}
+kfold <- trainControl(method="repeatedcv",number=10,repeats=4)
+
+train_step2 <- train(median_house_value ~ median_income + rooms_per_house , 
+                    data = trainData,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_step2)
+predict_step2 <-  predict(train_step2,testData)
+errors <- testData$median_house_value - predict_step2
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2,testData$median_house_value)^2
+r2
+
+
+
+train_step2_kfold <- train( median_house_value ~ median_income + rooms_per_house , 
+                    data = trainData,
+                    trControl=kfold,
+                    method="lm")
+summary(train_step2_kfold)
+predict_step2_kfold <-  predict(train_step2_kfold,testData)
+errors <- testData$median_house_value - predict_step2_kfold
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict_step2_kfold,testData$median_house_value)^2
+r2
+```
+
+
+```{r Final Results}
+#best model test for regression assumptions
+
+housingModel_allVariables <- lm(formula = median_house_value ~ latitude + longitude + 
+                     population_per_house +rooms_per_house + housing_median_age + 
+                     bedrooms_per_house +households + median_income + ocean_factor, data = housingData)
+summary(housingModel_allVariables)
+
+resettest(housingModel_allVariables, power=2, type="regressor",data = natopanel)
+
+library(car)
+vif(housingModel_allVariables)
+
+outlierTest(housingModel_allVariables)
+
+```
+
+## Section 12: Experimental Dataset - Removing Outliers
+```{r experiment - remove outlier from rooms_per_house}
+
+summary(housingData)
+str(housingData)
+
+Q <- quantile(housingData$rooms_per_house, probs=c(.75), na.rm = FALSE)
+Q
+
+housingRevised<- subset(housingData,  
+                        housingData$rooms_per_house < quantile(housingData$rooms_per_house, probs=c(.75)) & 
+                        housingData$rooms_per_house > quantile(housingData$rooms_per_house, probs=c(.25)) , na.rm = FALSE)
+
+str(housingRevised)
+
+
+boxFun2 <- function(y) {
+  ggplot(housingRevised, aes({{y}})) +
+    geom_boxplot(outlier.colour="red", outlier.shape=8,outlier.size=4, fill = "#0099F8")
+}
+
+boxrooms <- boxFun2(rooms_per_house)
+boxrooms
+
+
+
+set.seed(127)
+
+trainFrame <- createDataPartition(y=housingRevised$median_house_value, p=.6667, list = FALSE)
+trainRevised <- housingRevised[trainFrame,]
+testRevised <- housingRevised[-trainFrame,]
+dim(trainRevised)
+dim(testData)
+
+
+housingModel_allVariables_revised <- lm(formula = median_house_value ~ latitude + longitude + 
+                     population_per_house +rooms_per_house + housing_median_age + 
+                     bedrooms_per_house +households + median_income + ocean_factor, data = housingRevised)
+summary(housingModel_allVariables_revised)
+
+
+
+
+train_revised <- train(median_house_value ~ latitude + longitude + 
+                     population_per_house +rooms_per_house + housing_median_age + 
+                     bedrooms_per_house +households + median_income + ocean_factor, data = trainRevised,
+                    trControl=trainControl(method="none"),
+                    method="lm")
+summary(train_revised)
+
+
+predict <-  predict(train_revised,testRevised)
+errors <- testRevised$median_house_value - predict
+RMSE <- sqrt(mean(errors^2))
+RMSE
+r2 <- cor(predict,testRevised$median_house_value)^2
+r2
+
+```
