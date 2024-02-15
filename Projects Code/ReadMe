@@ -1,1 +1,8 @@
+# Fake or Real Job Project
+## Motives 
+Combating the growing prevalence of fake job postings requires more than mere warnings from government agencies. Job boards and employment agencies must take care to ensure the safety of their service and the applicants that rely on it by installing security controls that limit the presence of fraudulent job postings. Applying to a job posting exposes the job applicant to potential social engineering and such social engineering leverages normal social conventions to collect information that may be used for fraudulent purposes such as identity theft, or to gain account access for property theft. 
+## Problem Statement
+To assist in combating fraudulent job postings, this project seeks to train an algorithm to detect fake job postings accurately and reliably. This algorithm would become a candidate tool for screening future job postings for authenticity.
+## About the Data
+The data from this dataset includes columns which represent the different attributes on a particular job posting. The rows are the individual job postings. There are 18 columns in this dataset and 17,880 rows. The variables are a mix of strings and integer, with the integer variables being binary (yes or no) for those items. The data is 95% real jobs; 17,014 real jobs and 866 fake jobs. 
 
